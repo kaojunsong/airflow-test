@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-worker
+  namespace: {{K8S_NAMESPACE}}
+spec:
+  replicas: {{airflow_worker_replicas}}
+  selector:
+    matchLabels:
+      name: airflow-worker
+  template:
+    metadata:
+      labels:
+        name: airflow-worker
+      annotations:
+        log_type: "airflow"
+    spec:
+      containers:
+        - name: worker
+          image: {{docker_registry_ip}}:{{docker_registry_port}}/{{airflow_image_name}}
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c", "airflow celery worker --pid /airflow-worker.pid"]
+          env:
+            - name: AIRFLOW_KUBE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: sql_alchemy_conn
+            - name: RESULT_BACKEND
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: result_backend
+            - name: FLOWER_BASIC_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: flower_basic_auth
+          volumeMounts:
+            - name: airflow-config
+              mountPath: /root/airflow/airflow.cfg
+              subPath: airflow.cfg
+            - name: airflow
+              mountPath: /root/airflow
+            - name: kube-config
+              mountPath: /root/.kube
+            - name: certs-path
+              mountPath: /path/to/
+      initContainers:
+        - name: init
+          image: {{docker_registry_ip}}:{{docker_registry_port}}/{{airflow_image_name}}
+          command: ["/bin/bash","-c","pip install --no-index --find-links=/root/airflow/external_libs/ -r /root/airflow/external_libs/requirements.txt"]
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: airflow
+              mountPath: /root/airflow
+      volumes:
+        - name: airflow
+          persistentVolumeClaim:
+            claimName: airflow
+        - name: airflow-config
+          configMap:
+            name: airflow-config
+        - name: kube-config
+          persistentVolumeClaim:
+            claimName: kube-config
+        - name: certs-path
+          hostPath:
+            path: {{certs_home_directory}}
+            type: Directory

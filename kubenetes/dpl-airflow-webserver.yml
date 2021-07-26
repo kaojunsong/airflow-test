@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-webserver
+  namespace: {{K8S_NAMESPACE}}
+spec:
+  replicas: {{airflow_webserver_replicas}}
+  selector:
+    matchLabels:
+      name: airflow-webserver
+  template:
+    metadata:
+      labels:
+        name: airflow-webserver
+      annotations:
+        log_type: "airflow"
+    spec:
+      initContainers:
+        - name: "init"
+          image: {{docker_registry_ip}}:{{docker_registry_port}}/{{airflow_image_name}}
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: airflow-config
+              mountPath: /root/airflow/airflow.cfg
+              subPath: airflow.cfg
+            - name: airflow
+              mountPath: /root/airflow
+          env:
+            - name: SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: sql_alchemy_conn
+            - name: RESULT_BACKEND
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: result_backend
+            - name: FLOWER_BASIC_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: flower_basic_auth
+          command: ["/bin/bash", "-c", "airflow db upgrade & airflow users create --username {{delegator_airflow_authorization_username}}  --password {{delegator_airflow_authorization_password}} --firstname {{delegator_airflow_authorization_firstname}} --lastname {{delegator_airflow_authorization_lastname}} --role Admin --email {{delegator_airflow_authorization_email}}"]
+        - name: "init-external-libs"
+          image: {{docker_registry_ip}}:{{docker_registry_port}}/{{airflow_image_name}}
+          command: ["/bin/bash","-c","pip install --no-index --find-links=/root/airflow/external_libs/ -r /root/airflow/external_libs/requirements.txt"]
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: airflow
+              mountPath: /root/airflow
+      containers:
+        - name: webserver
+          image: {{docker_registry_ip}}:{{docker_registry_port}}/{{airflow_image_name}}
+          imagePullPolicy: Always
+          ports:
+            - name: webserver
+              containerPort: {{airflow_webserver_port}}
+          command: ["/bin/bash", "-c", "airflow webserver --pid /airflow-webserver.pid"]
+          env:
+            - name: AIRFLOW_KUBE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: sql_alchemy_conn
+            - name: RESULT_BACKEND
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-secrets
+                  key: result_backend
+          volumeMounts:
+            - name: airflow-config
+              mountPath: /root/airflow/airflow.cfg
+              subPath: airflow.cfg
+            - name: airflow-config
+              mountPath: /root/airflow/webserver_config.py
+              subPath: webserver_config.py
+            - name: airflow
+              mountPath: /root/airflow/
+            - name: certs-path
+              mountPath: /path/to/
+      volumes:
+        - name: airflow
+          persistentVolumeClaim:
+            claimName: airflow
+        - name: airflow-config
+          configMap:
+            name: airflow-config
+        - name: certs-path
+          hostPath:
+            path: {{certs_home_directory}}
+            type: Directory
